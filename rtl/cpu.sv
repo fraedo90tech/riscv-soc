@@ -12,6 +12,9 @@ logic [31:0] rs2_data;
 logic [31:0] alu_b;
 logic [31:0] alu_result;
 logic alu_zero;
+logic [31:0] mem_rdata;
+logic [31:0] result;
+logic [31:0] pc_plus4;
 
 //control unit outputs
 logic reg_write;
@@ -24,7 +27,8 @@ logic jump;
 logic alu_a_src;
 
 pc u_pc(
-    .clk(clk), .rst(rst), 
+    .clk(clk), 
+    .rst(rst), 
     .pc_next(pc_next),
     .pc_out(pc_cur)
     );
@@ -57,7 +61,7 @@ regfile u_regfile (
     .rs1_addr(instr[19:15]), 
     .rs2_addr(instr[24:20]), 
     .rd_addr(instr[11:7]),
-    .rd_data(alu_result),
+    .rd_data(result),
     .rs1_data(rs1_data), 
     .rs2_data(rs2_data)
 );
@@ -70,7 +74,26 @@ alu u_alu(
     .zero(alu_zero)
 );
 
-assign pc_next = pc_cur + 32'd4;              // next instruction
+dmem u_dmem(
+    .clk(clk),
+    .we(mem_write),
+    .funct3(instr[14:12]),
+    .addr(alu_result),
+    .rdata(mem_rdata),
+    .wdata(rs2_data)
+);
+
+assign pc_plus4  = pc_cur + 32'd4;              // next instruction
+assign pc_next = pc_plus4;
 assign alu_b   = alu_src ? imm : rs2_data;    // addi uses imm, add uses rs2
+
+always_comb begin
+    case (result_src)
+    2'b00: result = alu_result;
+    2'b01: result = mem_rdata;
+    2'b10: result = pc_plus4;
+    2'b11: result = imm;
+    endcase
+end
 
 endmodule

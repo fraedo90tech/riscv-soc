@@ -40,6 +40,23 @@ def srli(rd, rs1, sh): return i_type(sh, rs1, 0b101, rd)
 def srai(rd, rs1, sh): return i_type(0x400 | sh, rs1, 0b101, rd)
 
 
+# Loads (I-type, opcode LOAD): rd = mem[rs1 + imm]
+def lb(rd, imm, rs1):  return i_type(imm, rs1, 0b000, rd, opcode=0b0000011)
+def lh(rd, imm, rs1):  return i_type(imm, rs1, 0b001, rd, opcode=0b0000011)
+def lw(rd, imm, rs1):  return i_type(imm, rs1, 0b010, rd, opcode=0b0000011)
+def lbu(rd, imm, rs1): return i_type(imm, rs1, 0b100, rd, opcode=0b0000011)
+def lhu(rd, imm, rs1): return i_type(imm, rs1, 0b101, rd, opcode=0b0000011)
+
+# Stores (S-type): mem[rs1 + imm] = rs2. The imm is split: [11:5] in bits 31:25, [4:0] in bits 11:7
+def s_type(imm, rs2, rs1, funct3, opcode=0b0100011):
+    imm &= 0xFFF
+    return ((imm >> 5) << 25) | (rs2 << 20) | (rs1 << 15) | (funct3 << 12) | ((imm & 0x1F) << 7) | opcode
+
+def sb(rs2, imm, rs1): return s_type(imm, rs2, rs1, 0b000)
+def sh(rs2, imm, rs1): return s_type(imm, rs2, rs1, 0b001)
+def sw(rs2, imm, rs1): return s_type(imm, rs2, rs1, 0b010)
+
+
 def write_program(path, program):
     with open(path, "w") as f:
         for instr in program:
@@ -90,12 +107,26 @@ PROGRAM = [
     srli(22, 21, 31),     # x22 = 0x80000000 >> 31, zeros in  = 1
     srai(23, 21, 31),     # x23 = 0x80000000 >> 31, sign in   = -1
     sub(24, 1, 2),        # x24 = 5 - 10 = -5
+
+    # ---- group 3: loads and stores ----
+    addi(25, 0, 0x100),   # x25 = 0x100, the base address
+    addi(26, 0, -1234),   # x26 = -1234 = 0xFFFFFB2E
+    sw(26, 0, 25),        # mem[0x100..0x103] = 2E FB FF FF  (little-endian)
+    lw(27, 0, 25),        # x27 = 0xFFFFFB2E, the whole word back
+    lb(28, 1, 25),        # x28 = byte at 0x101 = 0xFB, sign-extended   = 0xFFFFFFFB
+    lbu(29, 1, 25),       # x29 = byte at 0x101 = 0xFB, zero-extended   = 0x000000FB
+    lh(30, 2, 25),        # x30 = half at 0x102 = 0xFFFF, sign-extended = -1
+    lhu(31, 0, 25),       # x31 = half at 0x100 = 0xFB2E, zero-extended
+    sb(14, 3, 25),        # byte 0x103 = 15  -> word is now 0x0FFFFB2E
+    sh(2, 0, 25),         # half 0x100 = 10  -> word is now 0x0FFF000A
+    lw(26, 0, 25),        # x26 = 0x0FFF000A: only the bytes sb/sh touched changed
 ]
 
 EXPECTED = {
     0: 0, 1: 5, 2: 10, 3: 15, 4: -5, 5: -10, 6: 5,
     7: -1, 8: 320, 9: 1, 10: 0, 11: ~10, 12: 0x07FFFFFF, 13: -1, 14: 15, 15: 10,
     16: 1, 17: 1, 18: ~5, 19: 0xF5, 20: 0x7FF, 21: 0x80000000, 22: 1, 23: -1, 24: -5,
+    25: 0x100, 26: 0x0FFF000A, 27: -1234, 28: -5, 29: 0xFB, 30: -1, 31: 0xFB2E,
 }
 
 
