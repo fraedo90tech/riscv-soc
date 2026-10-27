@@ -14,9 +14,30 @@ def r_type(funct7, rs2, rs1, funct3, rd, opcode=0b0110011):
 def i_type(imm, rs1, funct3, rd, opcode=0b0010011):
     return ((imm & 0xFFF) << 20) | (rs1 << 15) | (funct3 << 12) | (rd << 7) | opcode
 
+# R-type: rd = rs1 op rs2   (funct7 bit 30 picks sub / sra)
 def add(rd, rs1, rs2):  return r_type(0b0000000, rs2, rs1, 0b000, rd)
 def sub(rd, rs1, rs2):  return r_type(0b0100000, rs2, rs1, 0b000, rd)
-def addi(rd, rs1, imm): return i_type(imm, rs1, 0b000, rd)
+def sll(rd, rs1, rs2):  return r_type(0b0000000, rs2, rs1, 0b001, rd)
+def slt(rd, rs1, rs2):  return r_type(0b0000000, rs2, rs1, 0b010, rd)
+def sltu(rd, rs1, rs2): return r_type(0b0000000, rs2, rs1, 0b011, rd)
+def xor(rd, rs1, rs2):  return r_type(0b0000000, rs2, rs1, 0b100, rd)
+def srl(rd, rs1, rs2):  return r_type(0b0000000, rs2, rs1, 0b101, rd)
+def sra(rd, rs1, rs2):  return r_type(0b0100000, rs2, rs1, 0b101, rd)
+def or_(rd, rs1, rs2):  return r_type(0b0000000, rs2, rs1, 0b110, rd)   # "or" is a Python word
+def and_(rd, rs1, rs2): return r_type(0b0000000, rs2, rs1, 0b111, rd)   # so is "and"
+
+# I-type: rd = rs1 op imm
+def addi(rd, rs1, imm):  return i_type(imm, rs1, 0b000, rd)
+def slti(rd, rs1, imm):  return i_type(imm, rs1, 0b010, rd)
+def sltiu(rd, rs1, imm): return i_type(imm, rs1, 0b011, rd)
+def xori(rd, rs1, imm):  return i_type(imm, rs1, 0b100, rd)
+def ori(rd, rs1, imm):   return i_type(imm, rs1, 0b110, rd)
+def andi(rd, rs1, imm):  return i_type(imm, rs1, 0b111, rd)
+
+# Shifts by an immediate: the amount is imm[4:0]; srai also sets imm[10] (= instr bit 30)
+def slli(rd, rs1, sh): return i_type(sh, rs1, 0b001, rd)
+def srli(rd, rs1, sh): return i_type(sh, rs1, 0b101, rd)
+def srai(rd, rs1, sh): return i_type(0x400 | sh, rs1, 0b101, rd)
 
 
 def write_program(path, program):
@@ -41,22 +62,49 @@ async def run(dut, cycles):
 
 
 PROGRAM = [
-    addi(1, 0, 5),      # x1 = 5
-    addi(2, 0, 10),     # x2 = 10
-    add(3, 1, 2),       # x3 = x1 + x2 = 15
-    addi(4, 3, -20),    # x4 = 15 - 20 = -5
-    add(5, 4, 4),       # x5 = -10
-    sub(6, 2, 1),       # (sub isn't group 1, but OP already works)
-    addi(0, 0, 99),     # writing x0 must do nothing
+    # ---- group 1: add / addi ----
+    addi(1, 0, 5),        # x1 = 5
+    addi(2, 0, 10),       # x2 = 10
+    add(3, 1, 2),         # x3 = 15
+    addi(4, 3, -20),      # x4 = -5          (negative immediate)
+    add(5, 4, 4),         # x5 = -10
+    sub(6, 2, 1),         # x6 = 10 - 5 = 5
+    addi(0, 0, 99),       # writing x0 must do nothing
+
+    # ---- group 2: every other ALU op ----
+    addi(7, 0, -1),       # x7  = 0xFFFFFFFF (all ones)
+    sll(8, 2, 1),         # x8  = 10 << 5 = 320
+    slt(9, 4, 1),         # x9  = (-5 < 5) signed           = 1
+    sltu(10, 4, 1),       # x10 = (0xFFFFFFFB < 5) unsigned = 0
+    xor(11, 2, 7),        # x11 = 10 ^ all-ones = ~10
+    srl(12, 4, 1),        # x12 = 0xFFFFFFFB >> 5, zeros in  = 0x07FFFFFF
+    sra(13, 4, 1),        # x13 = -5 >> 5, sign bit in       = -1
+    or_(14, 1, 2),        # x14 = 0101 | 1010 = 15
+    and_(15, 4, 2),       # x15 = ...1011 & 1010 = 10
+    slti(16, 4, 0),       # x16 = (-5 < 0)                    = 1
+    sltiu(17, 1, -1),     # x17 = (5 < 0xFFFFFFFF) unsigned   = 1
+    xori(18, 1, -1),      # x18 = ~5                          (this is how "not" is done)
+    ori(19, 1, 0x0F0),    # x19 = 0x05 | 0xF0 = 0xF5
+    andi(20, 7, 0x7FF),   # x20 = all-ones & 0x7FF = 0x7FF
+    slli(21, 1, 31),      # x21 = 5 << 31 = 0x80000000 (only the bottom 1 survives)
+    srli(22, 21, 31),     # x22 = 0x80000000 >> 31, zeros in  = 1
+    srai(23, 21, 31),     # x23 = 0x80000000 >> 31, sign in   = -1
+    sub(24, 1, 2),        # x24 = 5 - 10 = -5
 ]
-EXPECTED = {1: 5, 2: 10, 3: 15, 4: -5 & MASK, 5: -10 & MASK, 6: 5, 0: 0}
+
+EXPECTED = {
+    0: 0, 1: 5, 2: 10, 3: 15, 4: -5, 5: -10, 6: 5,
+    7: -1, 8: 320, 9: 1, 10: 0, 11: ~10, 12: 0x07FFFFFF, 13: -1, 14: 15, 15: 10,
+    16: 1, 17: 1, 18: ~5, 19: 0xF5, 20: 0x7FF, 21: 0x80000000, 22: 1, 23: -1, 24: -5,
+}
 
 
 @cocotb.test()
-async def cpu_add_addi(dut):
+async def cpu_runs_program(dut):
     await run(dut, len(PROGRAM))
     for r, exp in EXPECTED.items():
         got = reg(dut, r)
+        exp &= MASK                       # negative numbers -> 32-bit pattern
         assert got == exp, f"x{r}: got {got:#x}, expected {exp:#x}"
 
 
