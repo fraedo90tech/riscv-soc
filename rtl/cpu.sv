@@ -9,6 +9,7 @@ logic [31:0] instr;
 logic [31:0] imm;
 logic [31:0] rs1_data;
 logic [31:0] rs2_data;
+logic [31:0] alu_a;
 logic [31:0] alu_b;
 logic [31:0] alu_result;
 logic alu_zero;
@@ -72,7 +73,7 @@ regfile u_regfile (
 );
 
 alu u_alu(
-    .a(rs1_data), 
+    .a(alu_a), 
     .b(alu_b), 
     .alu_op(alu_op), 
     .result(alu_result), 
@@ -93,6 +94,7 @@ assign cond = instr[14] ? !alu_zero : alu_zero;
 assign taken = branch && (cond ^ instr[12]);
 assign pc_target = pc_cur +imm;
 
+assign alu_a = alu_a_src ? pc_cur : rs1_data;
 assign pc_plus4  = pc_cur + 32'd4;              // next instruction
 assign alu_b   = alu_src ? imm : rs2_data;    // addi uses imm, add uses rs2
 

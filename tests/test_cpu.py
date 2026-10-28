@@ -80,6 +80,11 @@ def jal(rd, off):
 def jalr(rd, imm, rs1): return i_type(imm, rs1, 0b000, rd, opcode=0b1100111)
 
 
+# Upper immediates (U-type): the 20-bit value goes into the top of the register
+def lui(rd, upper):   return ((upper & 0xFFFFF) << 12) | (rd << 7) | 0b0110111
+def auipc(rd, upper): return ((upper & 0xFFFFF) << 12) | (rd << 7) | 0b0010111
+
+
 HALT = beq(0, 0, 0)     # "branch to myself forever": the program's last line
 
 
@@ -211,11 +216,26 @@ JUMPS = [
 JUMPS_EXPECTED = {10: 14, 11: 14, 1: 0x0C, 5: 0x18, 6: 0x28, 12: 7, 0: 0}
 
 
+# lui + addi is how any 32-bit constant gets into a register
+UPPER = [
+    lui(1, 0x12345),      # 0x00  x1 = 0x12345000
+    addi(1, 1, 0x678),    # 0x04  x1 = 0x12345678
+    lui(2, 0xDEADC),      # 0x08  x2 = 0xDEADC000
+    addi(2, 2, -0x111),   # 0x0C  x2 = 0xDEADBEEF  (addi's imm is signed, so lui rounds up and addi subtracts)
+    auipc(3, 0),          # 0x10  x3 = PC + 0 = 0x10
+    auipc(4, 1),          # 0x14  x4 = 0x14 + 0x1000 = 0x1014
+    lui(5, 0xFFFFF),      # 0x18  x5 = 0xFFFFF000, low 12 bits are zero
+    HALT,
+]
+UPPER_EXPECTED = {1: 0x12345678, 2: 0xDEADBEEF, 3: 0x10, 4: 0x1014, 5: 0xFFFFF000}
+
+
 # name -> (program, expected registers)
 PROGRAMS = {
     "alu_and_memory": (ALU_AND_MEMORY, ALU_AND_MEMORY_EXPECTED),
     "branches":       (BRANCHES, BRANCHES_EXPECTED),
     "jumps":          (JUMPS, JUMPS_EXPECTED),
+    "upper":          (UPPER, UPPER_EXPECTED),
 }
 
 
