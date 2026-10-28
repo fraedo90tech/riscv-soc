@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import cocotb
@@ -57,6 +58,22 @@ def sh(rs2, imm, rs1): return s_type(imm, rs2, rs1, 0b001)
 def sw(rs2, imm, rs1): return s_type(imm, rs2, rs1, 0b010)
 
 
+# Branches (B-type): if (rs1 ? rs2) PC += offset. The offset is shuffled like in immgen
+def b_type(offset, rs2, rs1, funct3, opcode=0b1100011):
+    o = offset & 0x1FFF
+    return (((o >> 12) & 1) << 31) | (((o >> 5) & 0x3F) << 25) | (rs2 << 20) | (rs1 << 15) \
+        | (funct3 << 12) | (((o >> 1) & 0xF) << 8) | (((o >> 11) & 1) << 7) | opcode
+
+def beq(rs1, rs2, off):  return b_type(off, rs2, rs1, 0b000)
+def bne(rs1, rs2, off):  return b_type(off, rs2, rs1, 0b001)
+def blt(rs1, rs2, off):  return b_type(off, rs2, rs1, 0b100)
+def bge(rs1, rs2, off):  return b_type(off, rs2, rs1, 0b101)
+def bltu(rs1, rs2, off): return b_type(off, rs2, rs1, 0b110)
+def bgeu(rs1, rs2, off): return b_type(off, rs2, rs1, 0b111)
+
+HALT = beq(0, 0, 0)     # "branch to myself forever": the program's last line
+
+
 def write_program(path, program):
     with open(path, "w") as f:
         for instr in program:
@@ -78,7 +95,7 @@ async def run(dut, cycles):
         await FallingEdge(dut.clk)
 
 
-PROGRAM = [
+ALU_AND_MEMORY = [
     # ---- group 1: add / addi ----
     addi(1, 0, 5),        # x1 = 5
     addi(2, 0, 10),       # x2 = 10
@@ -120,9 +137,10 @@ PROGRAM = [
     sb(14, 3, 25),        # byte 0x103 = 15  -> word is now 0x0FFFFB2E
     sh(2, 0, 25),         # half 0x100 = 10  -> word is now 0x0FFF000A
     lw(26, 0, 25),        # x26 = 0x0FFF000A: only the bytes sb/sh touched changed
+    HALT,
 ]
 
-EXPECTED = {
+ALU_AND_MEMORY_EXPECTED = {
     0: 0, 1: 5, 2: 10, 3: 15, 4: -5, 5: -10, 6: 5,
     7: -1, 8: 320, 9: 1, 10: 0, 11: ~10, 12: 0x07FFFFFF, 13: -1, 14: 15, 15: 10,
     16: 1, 17: 1, 18: ~5, 19: 0xF5, 20: 0x7FF, 21: 0x80000000, 22: 1, 23: -1, 24: -5,
@@ -130,10 +148,55 @@ EXPECTED = {
 }
 
 
+# Each "check" sets a register to 7, then branches over an instruction that would set it to 1.
+#   taken     -> the register stays 7
+#   not taken -> the register becomes 1
+BRANCHES = [
+    # a loop: x1 = 5 + 4 + 3 + 2 + 1
+    addi(1, 0, 0),        # 0x00  x1 = 0 (sum)
+    addi(2, 0, 5),        # 0x04  x2 = 5 (counter)
+    add(1, 1, 2),         # 0x08  loop: sum += counter
+    addi(2, 2, -1),       # 0x0C  counter -= 1
+    bne(2, 0, -8),        # 0x10  if counter != 0, back to 0x08
+    # values to compare: -1 and 1. Signed, -1 is smaller; unsigned, -1 is 0xFFFFFFFF, the biggest
+    addi(3, 0, -1),       # x3 = -1
+    addi(4, 0, 1),        # x4 = 1
+]
+BRANCH_CHECKS = [         # (register, branch instruction, taken?)
+    (10, beq(3, 3, 8),  True),     # -1 == -1
+    (11, beq(3, 4, 8),  False),    # -1 == 1
+    (12, bne(3, 4, 8),  True),
+    (13, bne(3, 3, 8),  False),
+    (14, blt(3, 4, 8),  True),     # -1 < 1 signed
+    (15, blt(4, 3, 8),  False),
+    (16, bge(4, 3, 8),  True),     # 1 >= -1 signed
+    (17, bge(3, 4, 8),  False),
+    (18, bltu(4, 3, 8), True),     # 1 < 0xFFFFFFFF unsigned
+    (19, bltu(3, 4, 8), False),
+    (20, bgeu(3, 4, 8), True),     # 0xFFFFFFFF >= 1 unsigned
+    (21, bgeu(4, 3, 8), False),
+    (22, bge(3, 3, 8),  True),     # equal counts as >=
+]
+for r, branch, _ in BRANCH_CHECKS:
+    BRANCHES += [addi(r, 0, 7), branch, addi(r, 0, 1)]
+BRANCHES += [HALT]
+
+BRANCHES_EXPECTED = {1: 15, 2: 0}
+BRANCHES_EXPECTED.update({r: 7 if taken else 1 for r, _, taken in BRANCH_CHECKS})
+
+
+# name -> (program, expected registers)
+PROGRAMS = {
+    "alu_and_memory": (ALU_AND_MEMORY, ALU_AND_MEMORY_EXPECTED),
+    "branches":       (BRANCHES, BRANCHES_EXPECTED),
+}
+
+
 @cocotb.test()
 async def cpu_runs_program(dut):
-    await run(dut, len(PROGRAM))
-    for r, exp in EXPECTED.items():
+    program, expected = PROGRAMS[os.environ["PROGRAM"]]
+    await run(dut, 200)                   # plenty: every program ends in HALT
+    for r, exp in expected.items():
         got = reg(dut, r)
         exp &= MASK                       # negative numbers -> 32-bit pattern
         assert got == exp, f"x{r}: got {got:#x}, expected {exp:#x}"
@@ -152,5 +215,7 @@ def test_cpu():
         build_args=["--public-flat-rw"],
         waves=True,
     )
-    write_program(build_dir / "program.hex", PROGRAM)
-    runner.test(hdl_toplevel="cpu", test_module="test_cpu", test_dir=build_dir, waves=True)
+    for name, (program, _) in PROGRAMS.items():
+        write_program(build_dir / "program.hex", program)
+        runner.test(hdl_toplevel="cpu", test_module="test_cpu", test_dir=build_dir,
+                    extra_env={"PROGRAM": name}, waves=True)

@@ -16,6 +16,11 @@ logic [31:0] mem_rdata;
 logic [31:0] result;
 logic [31:0] pc_plus4;
 
+//branch wires
+logic [31:0] pc_target;
+logic cond;
+logic taken;
+
 //control unit outputs
 logic reg_write;
 logic alu_src;
@@ -83,8 +88,13 @@ dmem u_dmem(
     .wdata(rs2_data)
 );
 
+//branch logic
+assign cond = instr[14] ? !alu_zero : alu_zero;
+assign taken = branch && (cond ^ instr[12]);
+assign pc_target = pc_cur +imm;
+
 assign pc_plus4  = pc_cur + 32'd4;              // next instruction
-assign pc_next = pc_plus4;
+assign pc_next = taken ? pc_target : pc_plus4;
 assign alu_b   = alu_src ? imm : rs2_data;    // addi uses imm, add uses rs2
 
 always_comb begin
