@@ -39,6 +39,10 @@ KNOWN = [
     ("sw x5, 8(x1)",      0x0050A423, (0, 1, 0, ADD,  1, R_ALU, 0, 0)),
     ("beq x1, x2, 16",    0x00208863, (0, 0, 0, SUB,  0, R_ALU, 1, 0)),
     ("bne x1, x2, -8",    0xFE209CE3, (0, 0, 0, SUB,  0, R_ALU, 1, 0)),
+    ("blt x1, x2, 16",    0x0020C863, (0, 0, 0, SLT,  0, R_ALU, 1, 0)),
+    ("bge x1, x2, 16",    0x0020D863, (0, 0, 0, SLT,  0, R_ALU, 1, 0)),
+    ("bltu x1, x2, 16",   0x0020E863, (0, 0, 0, SLTU, 0, R_ALU, 1, 0)),
+    ("bgeu x1, x2, 16",   0x0020F863, (0, 0, 0, SLTU, 0, R_ALU, 1, 0)),
     ("jal x1, 2048",      0x001000EF, (1, 0, 0, ADD,  0, R_PC4, 0, 1)),
     ("jalr x0, 0(x1)",    0x00008067, (1, 1, 0, ADD,  0, R_PC4, 0, 1)),
     ("lui x1, 0x12345",   0x123450B7, (1, 0, 0, ADD,  0, R_IMM, 0, 0)),
@@ -61,6 +65,7 @@ def control_model(instr):
         alu_op = SUB
     if funct3 == 5 and bit30:
         alu_op = SRA
+
     if opcode == OP:
         return (1, 0, 0, alu_op, 0, R_ALU, 0, 0)
     if opcode == OP_IMM:
@@ -70,7 +75,9 @@ def control_model(instr):
     if opcode == STORE:
         return (0, 1, 0, ADD, 1, R_ALU, 0, 0)
     if opcode == BRANCH:
-        return (0, 0, 0, SUB, 0, R_ALU, 1, 0)
+        # funct3 bits 2:1 pick the comparison: 00 = equal (SUB), 10 = SLT, 11 = SLTU
+        branch_op = {0b10: SLT, 0b11: SLTU}.get(funct3 >> 1, SUB)
+        return (0, 0, 0, branch_op, 0, R_ALU, 1, 0)
     if opcode == JAL:
         return (1, 0, 0, ADD, 0, R_PC4, 0, 1)
     if opcode == JALR:

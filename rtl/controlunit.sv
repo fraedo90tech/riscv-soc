@@ -48,7 +48,6 @@ always_comb begin // Determine ALU operation based on funct3 and funct7
         default: funct_op = ALU_ADD;
     endcase
 end
-
                        
 always_comb begin // Default control signals for each instruction type
     // Default values
@@ -73,7 +72,11 @@ always_comb begin // Default control signals for each instruction type
         end
         BRANCH: begin          // beq x1, x2, label
             branch     = 1'b1;   // no reg_write: branches don't touch rd
-            alu_op     = 4'b0001; // SUB: zero = 1 means rs1 == rs2
+            case (funct3[2:1])
+                2'b10: alu_op = ALU_SLT;
+                2'b11: alu_op = ALU_SLTU;
+                default: alu_op = ALU_SUB;
+            endcase
         end
         JAL: begin             // jal x1, label: rd = PC+4, then jump
             reg_write  = 1'b1;
