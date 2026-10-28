@@ -71,6 +71,15 @@ def bge(rs1, rs2, off):  return b_type(off, rs2, rs1, 0b101)
 def bltu(rs1, rs2, off): return b_type(off, rs2, rs1, 0b110)
 def bgeu(rs1, rs2, off): return b_type(off, rs2, rs1, 0b111)
 
+# Jumps: rd = PC + 4 (the return address), then jump
+def jal(rd, off):
+    o = off & 0x1FFFFF
+    return (((o >> 20) & 1) << 31) | (((o >> 1) & 0x3FF) << 21) | (((o >> 11) & 1) << 20) \
+        | (((o >> 12) & 0xFF) << 12) | (rd << 7) | 0b1101111
+
+def jalr(rd, imm, rs1): return i_type(imm, rs1, 0b000, rd, opcode=0b1100111)
+
+
 HALT = beq(0, 0, 0)     # "branch to myself forever": the program's last line
 
 
@@ -185,10 +194,28 @@ BRANCHES_EXPECTED = {1: 15, 2: 0}
 BRANCHES_EXPECTED.update({r: 7 if taken else 1 for r, _, taken in BRANCH_CHECKS})
 
 
+# A function call: "double x10" lives at 0x20, called with jal and returned from with jalr
+JUMPS = [
+    addi(10, 0, 7),       # 0x00  x10 = 7 (the function's argument)
+    addi(12, 0, 7),       # 0x04  x12 = 7 (changes to 1 only if the skip below fails)
+    jal(1, 0x20 - 0x08),  # 0x08  call the function: x1 = 0x0C, jump to 0x20
+    addi(11, 10, 0),      # 0x0C  back here after the call: x11 = x10 = 14
+    addi(6, 0, 0x28),     # 0x10  x6 = 0x28
+    jalr(5, 1, 6),        # 0x14  jump to (0x28 + 1) with bit 0 cleared = 0x28; x5 = 0x18
+    addi(12, 0, 1),       # 0x18  skipped
+    HALT,                 # 0x1C  never reached
+    add(10, 10, 10),      # 0x20  the function: x10 = x10 * 2
+    jalr(0, 0, 1),        # 0x24  return: jump to x1, throw the return address away (rd = x0)
+    HALT,                 # 0x28
+]
+JUMPS_EXPECTED = {10: 14, 11: 14, 1: 0x0C, 5: 0x18, 6: 0x28, 12: 7, 0: 0}
+
+
 # name -> (program, expected registers)
 PROGRAMS = {
     "alu_and_memory": (ALU_AND_MEMORY, ALU_AND_MEMORY_EXPECTED),
     "branches":       (BRANCHES, BRANCHES_EXPECTED),
+    "jumps":          (JUMPS, JUMPS_EXPECTED),
 }
 
 

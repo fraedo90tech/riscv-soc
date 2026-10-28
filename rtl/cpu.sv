@@ -94,8 +94,16 @@ assign taken = branch && (cond ^ instr[12]);
 assign pc_target = pc_cur +imm;
 
 assign pc_plus4  = pc_cur + 32'd4;              // next instruction
-assign pc_next = taken ? pc_target : pc_plus4;
 assign alu_b   = alu_src ? imm : rs2_data;    // addi uses imm, add uses rs2
+
+always_comb begin
+    if (instr [6:0] == 7'b1100111)
+        pc_next = {alu_result[31:1], 1'b0};
+    else if (instr [6:0] == 7'b1101111 || taken)
+        pc_next = pc_target;
+    else
+        pc_next = pc_plus4;
+end
 
 always_comb begin
     case (result_src)
